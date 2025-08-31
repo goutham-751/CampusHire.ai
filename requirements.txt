@@ -1,0 +1,23 @@
+# Backend Framework
+fastapi
+uvicorn[standard]
+
+# Frontend Framework
+streamlit
+
+# LLM and AI Libraries
+openai
+spacy
+sentence-transformers
+
+# PDF and File Handling
+PyMuPDF
+python-dotenv
+
+# Report Generation
+reportlab
+
+# Voice I/O
+SpeechRecognition
+gTTS
+pydub
