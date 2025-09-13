@@ -6,7 +6,7 @@ uvicorn[standard]
 streamlit
 
 # LLM and AI Libraries
-openai
+google-generativeai
 spacy
 sentence-transformers
 
@@ -21,3 +21,6 @@ reportlab
 SpeechRecognition
 gTTS
 pydub
+pyaudio
+pyttsx3
+
