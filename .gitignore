@@ -1,3 +1,48 @@
+# Add this content to .gitignore
+cat > .gitignore << 'EOF'
+# Virtual Environment
 venv/
+env/
+.venv/
+
+# Python cache
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment variables
 .env
+.env.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+temp_*
+tmp/
+*.tmp
+
+# Data files (if sensitive)
+data/uploaded_resumes/
+data/outputs/*.json
+data/outputs/*.md
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+EOF

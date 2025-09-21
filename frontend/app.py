@@ -7,122 +7,79 @@ import streamlit as st
 import requests
 import json
 import time
-import uuid
 from pathlib import Path
-import base64
-import speech_recognition as sr
-import pyttsx3
-from io import BytesIO
-import threading
-import queue
+import io
 import tempfile
-import os
 
 # Configure Streamlit page
 st.set_page_config(
-    page_title="CampusHire.ai - Voice Interview",
-    page_icon="🎤",
+    page_title="CampusHire.ai - AI Voice Interviews",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # API Configuration
-API_BASE_URL = "http://localhost:8000"  # Your FastAPI server
+API_BASE_URL = "http://localhost:8000"
 
-# Initialize session state variables
+# Initialize session state
 if 'session_id' not in st.session_state:
     st.session_state.session_id = None
 if 'current_question' not in st.session_state:
     st.session_state.current_question = None
 if 'interview_responses' not in st.session_state:
     st.session_state.interview_responses = []
-if 'is_recording' not in st.session_state:
-    st.session_state.is_recording = False
-if 'current_question_number' not in st.session_state:
-    st.session_state.current_question_number = 0
-if 'total_questions' not in st.session_state:
-    st.session_state.total_questions = 5
-
-# Audio recording helper functions
-class AudioRecorder:
-    def __init__(self):
-        self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
-        self.is_listening = False
-        
-    def record_audio(self, timeout=15, phrase_limit=60):
-        """Record audio and convert to text"""
-        try:
-            with self.microphone as source:
-                # Calibrate for ambient noise
-                self.recognizer.adjust_for_ambient_noise(source, duration=1)
-                st.info("🎤 Listening... Please speak clearly")
-                
-                # Record audio
-                audio = self.recognizer.listen(
-                    source, 
-                    timeout=timeout, 
-                    phrase_time_limit=phrase_limit
-                )
-                
-                st.info("🔄 Processing your response...")
-                
-                # Convert to text
-                text = self.recognizer.recognize_google(audio)
-                return text, "success"
-                
-        except sr.WaitTimeoutError:
-            return None, "timeout"
-        except sr.UnknownValueError:
-            return None, "unclear"
-        except sr.RequestError as e:
-            return None, f"error: {e}"
+if 'interview_started' not in st.session_state:
+    st.session_state.interview_started = False
 
 # API Helper Functions
-def create_interview_session(job_description, candidate_name, num_questions, resume_file=None):
-    """Create new interview session via API"""
+def check_api_health():
+    """Check if the backend API is running"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/api/health", timeout=5)
+        return response.status_code == 200, response.json() if response.status_code == 200 else None
+    except:
+        return False, None
+
+def create_interview_session(candidate_name, job_description, num_questions, resume_file=None):
+    """Create a new interview session"""
     try:
         files = {}
         if resume_file:
             files["resume"] = ("resume.pdf", resume_file, "application/pdf")
         
         data = {
-            "job_description": job_description,
             "candidate_name": candidate_name,
+            "job_description": job_description,
             "num_questions": num_questions
         }
         
         response = requests.post(
             f"{API_BASE_URL}/api/interview/create",
             data=data,
-            files=files
+            files=files,
+            timeout=30
         )
         
-        if response.status_code == 200:
-            return response.json(), True
-        else:
-            return {"error": f"HTTP {response.status_code}"}, False
-            
+        return response.status_code == 201, response.json()
     except Exception as e:
-        return {"error": str(e)}, False
+        return False, {"error": str(e)}
 
 def get_next_question(session_id):
-    """Get next question from API"""
+    """Get the next question"""
     try:
         response = requests.get(f"{API_BASE_URL}/api/interview/{session_id}/question")
-        if response.status_code == 200:
-            return response.json(), True
-        else:
-            return {"error": f"HTTP {response.status_code}"}, False
+        return response.status_code == 200, response.json()
     except Exception as e:
-        return {"error": str(e)}, False
+        return False, {"error": str(e)}
 
 def submit_response(session_id, question_id, response_text):
-    """Submit candidate response to API"""
+    """Submit candidate response"""
     try:
         data = {
             "question_id": question_id,
-            "response_text": response_text
+            "response_text": response_text,
+            "audio_duration": 0
         }
         
         response = requests.post(
@@ -130,175 +87,244 @@ def submit_response(session_id, question_id, response_text):
             json=data
         )
         
-        if response.status_code == 200:
-            return response.json(), True
-        else:
-            return {"error": f"HTTP {response.status_code}"}, False
+        return response.status_code == 200, response.json()
     except Exception as e:
-        return {"error": str(e)}, False
+        return False, {"error": str(e)}
 
 def get_interview_report(session_id):
     """Get final interview report"""
     try:
         response = requests.get(f"{API_BASE_URL}/api/interview/{session_id}/report")
-        if response.status_code == 200:
-            return response.json(), True
-        else:
-            return {"error": f"HTTP {response.status_code}"}, False
+        return response.status_code == 200, response.json()
     except Exception as e:
-        return {"error": str(e)}, False
+        return False, {"error": str(e)}
 
-# Text-to-Speech for questions
-@st.cache_resource
-def get_tts_engine():
-    """Initialize TTS engine"""
+def get_session_status(session_id):
+    """Get session status"""
     try:
-        engine = pyttsx3.init()
-        engine.setProperty('rate', 160)
-        engine.setProperty('volume', 0.9)
-        return engine
-    except:
-        return None
+        response = requests.get(f"{API_BASE_URL}/api/interview/{session_id}/status")
+        return response.status_code == 200, response.json()
+    except Exception as e:
+        return False, {"error": str(e)}
 
-def speak_text(text):
-    """Convert text to speech"""
-    tts_engine = get_tts_engine()
-    if tts_engine:
-        try:
-            tts_engine.say(text)
-            tts_engine.runAndWait()
-        except:
-            st.warning("Text-to-speech not available")
-
-# Main Application Layout
+# Main Application
 def main():
-    st.title("🎯 CampusHire.ai - AI Voice Interview System")
-    st.markdown("---")
+    # Header
+    st.title("🎯 CampusHire.ai")
+    st.subheader("AI-Powered Voice Interview Platform")
     
-    # Sidebar for navigation
+    # Sidebar
     with st.sidebar:
-        st.header("📋 Interview Navigation")
-        
-        if st.session_state.session_id:
-            st.success(f"Active Session: {st.session_state.session_id[:8]}...")
-            st.progress(st.session_state.current_question_number / st.session_state.total_questions)
-            st.write(f"Question {st.session_state.current_question_number} of {st.session_state.total_questions}")
-        
-        st.markdown("---")
         st.header("🔧 System Status")
         
-        # Check API connection
-        try:
-            response = requests.get(f"{API_BASE_URL}/api/health", timeout=5)
-            if response.status_code == 200:
-                st.success("✅ Backend Connected")
-            else:
-                st.error("❌ Backend Error")
-        except:
+        # Check API health
+        api_healthy, health_data = check_api_health()
+        
+        if api_healthy:
+            st.success("✅ Backend Connected")
+            if health_data:
+                st.info(f"🎤 {health_data.get('active_sessions', 0)} Active Sessions")
+        else:
             st.error("❌ Backend Offline")
-            st.error("Please start your FastAPI server:")
-            st.code("python backend/api/main.py")
+            st.error("Please start your backend server:")
+            st.code("cd backend/api && python main.py")
+            return
+        
+        # Session info
+        if st.session_state.session_id:
+            success, status_data = get_session_status(st.session_state.session_id)
+            if success:
+                progress = status_data.get("progress", {})
+                st.success(f"📋 Session Active")
+                st.progress(progress.get("completion_percentage", 0) / 100)
+                st.write(f"Question {progress.get('current_question', 0)} of {progress.get('total_questions', 5)}")
+        
+        st.markdown("---")
+        
+        # Reset button
+        if st.button("🔄 Start New Interview"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
     
-    # Main content area
+    # Main content
     if not st.session_state.session_id:
         show_setup_page()
+    elif not st.session_state.interview_started:
+        show_interview_ready_page()
     else:
         show_interview_page()
 
 def show_setup_page():
     """Setup page for new interviews"""
-    st.header("🚀 Start New Interview")
+    st.header("🚀 Start New AI Interview")
     
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        # Candidate Information
-        st.subheader("👤 Candidate Information")
-        candidate_name = st.text_input("Full Name", placeholder="Enter candidate's name")
-        
-        # Job Description
-        st.subheader("💼 Job Description")
-        job_description = st.text_area(
-            "Job Requirements", 
-            placeholder="Paste the job description here...",
-            height=150
-        )
-        
-        # Resume Upload
-        st.subheader("📄 Resume Upload (Optional)")
-        resume_file = st.file_uploader(
-            "Upload Resume (PDF)", 
-            type=['pdf'],
-            help="Upload candidate's resume for personalized questions"
-        )
-        
-        # Interview Settings
-        st.subheader("⚙️ Interview Settings")
-        num_questions = st.slider("Number of Questions", 3, 10, 5)
-        
-        # Start Interview Button
-        if st.button("🎤 Start Voice Interview", type="primary", use_container_width=True):
-            if candidate_name and job_description:
-                with st.spinner("Creating interview session..."):
-                    result, success = create_interview_session(
-                        job_description, 
-                        candidate_name, 
-                        num_questions, 
-                        resume_file
-                    )
-                
-                if success:
-                    st.session_state.session_id = result['session_id']
-                    st.session_state.total_questions = num_questions
-                    st.session_state.current_question_number = 0
-                    st.success("✅ Interview session created!")
-                    time.sleep(1)
-                    st.rerun()
+        # Interview Setup Form
+        with st.form("interview_setup"):
+            st.subheader("👤 Candidate Information")
+            candidate_name = st.text_input(
+                "Full Name *", 
+                placeholder="Enter candidate's full name",
+                help="Required field for interview session"
+            )
+            
+            st.subheader("💼 Job Information")
+            job_description = st.text_area(
+                "Job Description & Requirements", 
+                placeholder="Paste the job description here...\n\nThis helps generate personalized questions based on role requirements.",
+                height=150,
+                help="Detailed job description improves question relevance"
+            )
+            
+            st.subheader("📄 Resume Upload")
+            resume_file = st.file_uploader(
+                "Upload Resume (PDF)", 
+                type=['pdf'],
+                help="Optional - Upload for personalized questions and resume-job matching"
+            )
+            
+            st.subheader("⚙️ Interview Settings")
+            num_questions = st.slider(
+                "Number of Questions", 
+                min_value=3, 
+                max_value=10, 
+                value=5,
+                help="Recommended: 5-7 questions for comprehensive assessment"
+            )
+            
+            # Submit button
+            submitted = st.form_submit_button(
+                "🎤 Create Interview Session", 
+                type="primary",
+                use_container_width=True
+            )
+            
+            if submitted:
+                if not candidate_name or not candidate_name.strip():
+                    st.error("❌ Please enter the candidate's name")
                 else:
-                    st.error(f"❌ Failed to create session: {result.get('error', 'Unknown error')}")
-            else:
-                st.error("Please fill in candidate name and job description")
+                    with st.spinner("🔄 Creating interview session..."):
+                        success, result = create_interview_session(
+                            candidate_name.strip(),
+                            job_description.strip(),
+                            num_questions,
+                            resume_file
+                        )
+                    
+                    if success:
+                        st.session_state.session_id = result['session_id']
+                        st.session_state.candidate_name = candidate_name.strip()
+                        st.session_state.total_questions = num_questions
+                        st.success("✅ Interview session created successfully!")
+                        
+                        # Show resume processing results
+                        if result.get('resume_processing_log', {}).get('extraction_successful'):
+                            match_score = result.get('resume_match_score', 0)
+                            st.info(f"📊 Resume processed! Job match score: {match_score:.1f}%")
+                        
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to create session: {result.get('error', 'Unknown error')}")
     
     with col2:
-        st.subheader("📋 Interview Overview")
+        # Information panel
+        st.subheader("📋 About CampusHire.ai")
         st.info("""
-        **This AI Interview System:**
+        **🎯 AI-Powered Interviews**
+        - Intelligent question generation
+        - Real-time response evaluation
+        - Comprehensive candidate assessment
         
-        🎤 **Voice Recognition**: Speaks questions and listens to responses
+        **🔒 Privacy First**
+        - Resume files processed temporarily
+        - Secure data handling
+        - GDPR compliant
         
-        🧠 **AI-Powered**: Uses Gemini AI for intelligent questions and evaluation
-        
-        📊 **Real-time Scoring**: Evaluates responses as you go
-        
-        📈 **Detailed Reports**: Generates comprehensive assessment reports
-        
-        🔄 **Adaptive**: Questions adjust based on previous responses
+        **📊 Advanced Analytics**
+        - Technical competency scoring
+        - Communication assessment
+        - Detailed reporting
         """)
         
-        st.subheader("🎯 Tips for Success")
+        st.subheader("💡 Interview Tips")
         st.success("""
-        • Speak clearly and at normal pace
-        • Take time to think before responding
-        • Provide specific examples
-        • Use the microphone button to record
-        • Review your responses before submitting
+        **For Best Results:**
+        - Speak clearly and naturally
+        - Provide specific examples
+        - Take time to think before answering
+        - Give detailed responses
+        - Ask questions if unclear
+        """)
+
+def show_interview_ready_page():
+    """Page shown when session is created but interview hasn't started"""
+    st.header("🎤 Interview Session Ready")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.success(f"✅ Interview session created for **{st.session_state.get('candidate_name', 'Candidate')}**")
+        
+        # Session details
+        st.subheader("📋 Session Details")
+        success, status = get_session_status(st.session_state.session_id)
+        if success:
+            st.write(f"**Session ID:** {st.session_state.session_id[:16]}...")
+            st.write(f"**Total Questions:** {status.get('progress', {}).get('total_questions', 5)}")
+            
+            # Show resume info if available
+            candidate_info = status.get('candidate_info', {})
+            if candidate_info.get('resume_processed'):
+                st.write(f"**Resume Processed:** ✅ Yes (Match: {candidate_info.get('resume_match_score', 0):.1f}%)")
+            else:
+                st.write("**Resume Processed:** ❌ No")
+        
+        st.markdown("---")
+        
+        # Start interview button
+        st.subheader("🚀 Ready to Begin?")
+        st.write("Click below to start your AI-powered voice interview. Make sure you're in a quiet environment and ready to speak clearly.")
+        
+        if st.button("🎤 Start Interview Now", type="primary", use_container_width=True):
+            st.session_state.interview_started = True
+            st.rerun()
+    
+    with col2:
+        st.subheader("🎯 What to Expect")
+        st.info("""
+        **Interview Process:**
+        1. AI generates personalized questions
+        2. You provide detailed responses
+        3. Real-time evaluation and feedback
+        4. Comprehensive final report
+        
+        **Question Types:**
+        - Introduction & Background
+        - Technical Skills
+        - Behavioral Scenarios
+        - Role-Specific Queries
+        - Problem Solving
         """)
 
 def show_interview_page():
     """Main interview interface"""
-    st.header("🎤 Voice Interview in Progress")
+    st.header("🎤 Interview in Progress")
     
-    # Get current question if none exists
+    # Get current question if needed
     if not st.session_state.current_question:
-        with st.spinner("Loading next question..."):
-            result, success = get_next_question(st.session_state.session_id)
+        with st.spinner("🔄 Loading next question..."):
+            success, result = get_next_question(st.session_state.session_id)
         
-        if success and "question_text" in result:
-            st.session_state.current_question = result
-            st.session_state.current_question_number = result.get('question_number', 1)
-        elif success and result.get('status') == 'interview_completed':
-            show_completion_page()
-            return
+        if success:
+            if result.get('status') == 'interview_completed':
+                show_completion_page()
+                return
+            else:
+                st.session_state.current_question = result
         else:
             st.error(f"❌ Error loading question: {result.get('error', 'Unknown error')}")
             return
@@ -306,210 +332,204 @@ def show_interview_page():
     # Display current question
     question_data = st.session_state.current_question
     
-    st.subheader(f"Question {question_data.get('question_number', '?')} of {st.session_state.total_questions}")
+    # Progress indicator
+    progress = question_data.get('progress_percentage', 0)
+    st.progress(progress / 100)
+    st.write(f"**Progress:** {progress:.1f}% Complete")
     
-    # Question display with TTS
-    question_text = question_data.get('question_text', '')
-    st.markdown(f"### 💬 {question_text}")
+    # Question display
+    st.subheader(f"Question {question_data.get('question_number', '?')} of {question_data.get('total_questions', 5)}")
     
-    col1, col2 = st.columns([1, 4])
+    category = question_data.get('category', 'General').title()
+    st.markdown(f"**Category:** {category}")
     
-    with col1:
-        if st.button("🔊 Read Question Aloud"):
-            with st.spinner("Speaking question..."):
-                speak_text(question_text)
+    # Question text in a nice container
+    with st.container():
+        st.markdown("### 💬 Interview Question")
+        st.markdown(f"*{question_data.get('question_text', 'Loading...')}*")
     
-    # Response Collection
     st.markdown("---")
-    st.subheader("🎤 Your Response")
     
-    # Audio recording interface
-    col1, col2, col3 = st.columns([2, 2, 2])
+    # Response input
+    st.subheader("✍️ Your Response")
     
-    # Initialize audio recorder
-    if 'audio_recorder' not in st.session_state:
-        st.session_state.audio_recorder = AudioRecorder()
+    response_text = st.text_area(
+        "Type your response here:", 
+        height=200,
+        placeholder="Provide a detailed response with specific examples...",
+        help="Take your time to provide a comprehensive answer with concrete examples."
+    )
     
-    response_text = ""
-    
-    with col1:
-        if st.button("🎤 Start Recording", type="primary", use_container_width=True):
-            if not st.session_state.is_recording:
-                st.session_state.is_recording = True
-                
-                with st.spinner("Recording your response..."):
-                    recorded_text, status = st.session_state.audio_recorder.record_audio()
-                
-                st.session_state.is_recording = False
-                
-                if status == "success" and recorded_text:
-                    st.session_state.recorded_response = recorded_text
-                    st.success("✅ Recording completed!")
-                elif status == "timeout":
-                    st.warning("⏱️ Recording timeout - please try again")
-                elif status == "unclear":
-                    st.warning("🔇 Could not understand audio - please speak more clearly")
-                else:
-                    st.error(f"❌ Recording error: {status}")
+    col1, col2, col3 = st.columns([1, 1, 1])
     
     with col2:
-        # Manual text input as alternative
-        response_text = st.text_area(
-            "Or type your response:", 
-            value=st.session_state.get('recorded_response', ''),
-            height=150,
-            key="manual_response"
-        )
-    
-    with col3:
-        if st.button("📝 Submit Response", type="secondary", use_container_width=True):
-            if response_text.strip():
-                with st.spinner("Submitting and evaluating response..."):
-                    result, success = submit_response(
+        if st.button("📝 Submit Response", type="primary", use_container_width=True):
+            if not response_text.strip():
+                st.error("❌ Please provide a response before submitting")
+            else:
+                with st.spinner("🔄 Evaluating your response..."):
+                    success, result = submit_response(
                         st.session_state.session_id,
                         question_data.get('question_id'),
-                        response_text
+                        response_text.strip()
                     )
                 
                 if success:
-                    # Store response
+                    # Store response and show feedback
                     st.session_state.interview_responses.append({
-                        "question": question_text,
-                        "response": response_text,
+                        "question": question_data.get('question_text'),
+                        "response": response_text.strip(),
                         "evaluation": result.get('evaluation_score', 0),
                         "feedback": result.get('feedback', '')
                     })
                     
-                    # Show immediate feedback
+                    # Show evaluation results
                     score = result.get('evaluation_score', 0)
-                    feedback = result.get('feedback', 'Thank you for your response.')
+                    feedback = result.get('feedback', '')
                     
                     if score >= 8:
-                        st.success(f"🎉 Excellent response! Score: {score}/10")
+                        st.success(f"🎉 Excellent! Score: {score}/10")
                     elif score >= 6:
                         st.info(f"👍 Good response! Score: {score}/10")
                     else:
-                        st.warning(f"💡 Room for improvement. Score: {score}/10")
+                        st.warning(f"💡 Score: {score}/10 - Room for improvement")
                     
-                    st.info(f"💬 Feedback: {feedback}")
+                    st.info(f"💬 **Feedback:** {feedback}")
                     
-                    # Clear current question to load next one
+                    # Clear current question
                     st.session_state.current_question = None
-                    st.session_state.recorded_response = ""
                     
                     # Check if interview is complete
                     if result.get('next_action') == 'complete':
-                        st.balloons()
                         time.sleep(2)
+                        st.balloons()
                         show_completion_page()
                         return
                     
-                    time.sleep(2)
+                    # Auto-advance to next question
+                    time.sleep(3)
                     st.rerun()
                 else:
                     st.error(f"❌ Failed to submit response: {result.get('error', 'Unknown error')}")
-            else:
-                st.error("Please provide a response before submitting")
     
-    # Show interview progress
-    st.markdown("---")
-    st.subheader("📊 Interview Progress")
-    
+    # Show previous responses
     if st.session_state.interview_responses:
-        for i, resp in enumerate(st.session_state.interview_responses, 1):
-            with st.expander(f"Question {i}: {resp['question'][:50]}..."):
-                st.write(f"**Your Response:** {resp['response'][:200]}...")
-                st.write(f"**Score:** {resp['evaluation']}/10")
+        st.markdown("---")
+        st.subheader("📊 Previous Responses")
+        
+        for i, resp in enumerate(st.session_state.interview_responses[-3:], 1):  # Show last 3
+            with st.expander(f"Response {len(st.session_state.interview_responses) - 3 + i}: Score {resp['evaluation']}/10"):
+                st.write(f"**Q:** {resp['question'][:100]}...")
+                st.write(f"**A:** {resp['response'][:200]}...")
                 st.write(f"**Feedback:** {resp['feedback']}")
-    
-    # Emergency controls
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        if st.button("⏸️ End Interview Early"):
-            show_completion_page()
-    
-    with col2:
-        if st.button("🔄 Restart Interview"):
-            # Clear session state
-            for key in ['session_id', 'current_question', 'interview_responses', 'recorded_response']:
-                if key in st.session_state:
-                    del st.session_state[key]
-            st.rerun()
 
 def show_completion_page():
     """Interview completion and report page"""
     st.header("🎉 Interview Completed!")
     
-    st.success("Congratulations! You have successfully completed your voice interview.")
+    st.success(f"Congratulations! You have successfully completed your CampusHire.ai interview.")
     
-    # Generate final report
-    if st.button("📊 Generate Final Report", type="primary"):
-        with st.spinner("Generating comprehensive interview report..."):
-            result, success = get_interview_report(st.session_state.session_id)
+    # Show completion stats
+    col1, col2, col3 = st.columns(3)
+    
+    responses_count = len(st.session_state.interview_responses)
+    avg_score = sum(r['evaluation'] for r in st.session_state.interview_responses) / max(responses_count, 1)
+    
+    with col1:
+        st.metric("Questions Answered", responses_count)
+    with col2:
+        st.metric("Average Score", f"{avg_score:.1f}/10")
+    with col3:
+        if avg_score >= 7:
+            st.metric("Assessment", "Strong 💪")
+        elif avg_score >= 5:
+            st.metric("Assessment", "Good 👍")
+        else:
+            st.metric("Assessment", "Developing 📈")
+    
+    st.markdown("---")
+    
+    # Generate report button
+    if st.button("📊 Generate Detailed Report", type="primary", use_container_width=True):
+        with st.spinner("🔄 Generating comprehensive assessment report..."):
+            success, report_data = get_interview_report(st.session_state.session_id)
         
         if success:
             st.subheader("📋 Interview Assessment Report")
             
             # Display key metrics
+            performance = report_data.get('performance_metrics', {})
+            
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Questions Answered", result.get('questions_answered', 0))
+                st.metric("Overall Score", f"{performance.get('overall_score', 0):.1f}/10")
             with col2:
-                st.metric("Average Score", f"{result.get('average_score', 0)}/10")
+                st.metric("Technical Skills", f"{performance.get('technical_competency', 0):.1f}/5")
             with col3:
-                st.metric("Resume Match", f"{result.get('resume_match_score', 0):.1f}%")
+                st.metric("Communication", f"{performance.get('communication_skills', 0):.1f}/5")
             with col4:
-                recommendation = result.get('recommendation', 'Under Review')
+                recommendation = performance.get('recommendation', 'Under Review')
                 st.metric("Recommendation", recommendation)
             
-            # Display detailed responses
-            st.subheader("📝 Detailed Responses")
+            # Detailed analysis
+            st.subheader("📈 Detailed Analysis")
             
-            if 'detailed_responses' in result:
-                for i, response in enumerate(result['detailed_responses'], 1):
-                    with st.expander(f"Question {i}: {response.get('category', 'General').title()} Question"):
-                        st.write(f"**Question:** {response.get('question', 'N/A')}")
-                        st.write(f"**Response:** {response.get('response_text', 'N/A')}")
-                        
-                        eval_data = response.get('evaluation', {})
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            st.metric("Overall Score", f"{eval_data.get('overall_score', 0)}/10")
-                        with col2:
-                            st.metric("Technical Depth", f"{eval_data.get('technical_depth', 0)}/5")
-                        with col3:
-                            st.metric("Communication", f"{eval_data.get('communication_clarity', 0)}/5")
-                        
-                        if eval_data.get('strengths'):
-                            st.write("**Strengths:**")
-                            for strength in eval_data['strengths']:
-                                st.write(f"• {strength}")
-                        
-                        if eval_data.get('improvements'):
-                            st.write("**Areas for Improvement:**")
-                            for improvement in eval_data['improvements']:
-                                st.write(f"• {improvement}")
+            # Strengths and improvements
+            qualitative = report_data.get('qualitative_assessment', {})
             
-            # Download report as JSON
-            report_json = json.dumps(result, indent=2)
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**💪 Key Strengths:**")
+                strengths = qualitative.get('top_strengths', [])
+                for strength in strengths[:5]:
+                    st.write(f"• {strength}")
+            
+            with col2:
+                st.markdown("**📈 Development Areas:**")
+                improvements = qualitative.get('key_improvement_areas', [])
+                for improvement in improvements[:3]:
+                    st.write(f"• {improvement}")
+            
+            # Response breakdown
+            st.subheader("📝 Response Analysis")
+            responses = report_data.get('detailed_responses', [])
+            
+            for i, response in enumerate(responses, 1):
+                with st.expander(f"Question {i}: {response.get('category', 'General').title()} (Score: {response.get('evaluation', {}).get('overall_score', 0)}/10)"):
+                    st.write(f"**Question:** {response.get('question', 'N/A')}")
+                    st.write(f"**Your Response:** {response.get('response_text', 'N/A')[:300]}...")
+                    
+                    eval_data = response.get('evaluation', {})
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Strengths:**")
+                        for strength in eval_data.get('strengths', [])[:2]:
+                            st.write(f"• {strength}")
+                    with col2:
+                        st.write("**Improvements:**")
+                        for improvement in eval_data.get('improvements', [])[:2]:
+                            st.write(f"• {improvement}")
+            
+            # Download report
+            st.markdown("---")
+            report_json = json.dumps(report_data, indent=2)
             st.download_button(
                 label="📥 Download Full Report (JSON)",
                 data=report_json,
-                file_name=f"interview_report_{st.session_state.session_id}.json",
+                file_name=f"campushireai_report_{st.session_state.session_id[:8]}.json",
                 mime="application/json"
             )
         
         else:
-            st.error(f"❌ Failed to generate report: {result.get('error', 'Unknown error')}")
+            st.error(f"❌ Failed to generate report: {report_data.get('error', 'Unknown error')}")
     
-    # Start new interview button
-    if st.button("🔄 Start New Interview"):
-        # Clear all session state
+    # New interview button
+    st.markdown("---")
+    if st.button("🔄 Start New Interview", use_container_width=True):
         for key in list(st.session_state.keys()):
-            if key != 'audio_recorder':  # Keep the audio recorder
-                del st.session_state[key]
+            del st.session_state[key]
         st.rerun()
 
 # Run the application
