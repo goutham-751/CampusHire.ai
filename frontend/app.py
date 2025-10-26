@@ -92,10 +92,16 @@ def submit_response(session_id, question_id, response_text):
         return False, {"error": str(e)}
 
 def get_interview_report(session_id):
-    """Get final interview report"""
     try:
-        response = requests.get(f"{API_BASE_URL}/api/interview/{session_id}/report")
-        return response.status_code == 200, response.json()
+        response = requests.get(
+            f"{API_BASE_URL}/api/interview/{session_id}/report",
+            timeout=45  # Longer timeout for report generation
+        )
+        if response.status_code == 200:
+            return True, response.json()
+        return False, {"error": f"API returned status code {response.status_code}"}
+    except requests.exceptions.Timeout:
+        return False, {"error": "Report generation timed out"}
     except Exception as e:
         return False, {"error": str(e)}
 

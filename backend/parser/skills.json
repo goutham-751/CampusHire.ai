@@ -1,0 +1,27 @@
+{
+  "skills": [
+    "python", "java", "c++", "javascript", "typescript", "html", "css", 
+    "react", "angular", "vue", "node.js", "django", "flask", "fastapi", 
+    "sql", "nosql", "mongodb", "postgresql", "mysql", "sqlite", "oracle",
+    "docker", "kubernetes", "aws", "azure", "gcp", "git", "github", "gitlab",
+    "machine learning", "deep learning", "artificial intelligence", "ai", "ml", "dl",
+    "tensorflow", "pytorch", "scikit-learn", "keras", "opencv", "nltk", "spacy",
+    "pandas", "numpy", "matplotlib", "seaborn", "plotly", "scipy", "jupyter",
+    "data analysis", "data science", "data visualization", "data engineering",
+    "big data", "hadoop", "spark", "kafka", "hive", "hbase", "cassandra",
+    "devops", "ci/cd", "jenkins", "ansible", "terraform", "prometheus", "grafana",
+    "linux", "bash", "shell scripting", "powershell", "rest api", "graphql", "grpc",
+    "microservices", "serverless", "aws lambda", "azure functions", "google cloud functions",
+    "blockchain", "ethereum", "solidity", "smart contracts", "web3", "truffle",
+    "cybersecurity", "penetration testing", "ethical hacking", "owasp", "cryptography",
+    "agile", "scrum", "kanban", "jira", "confluence", "trello", "asana",
+    "excel", "power bi", "tableau", "excel", "powerpoint", "word", "outlook",
+    "team management", "leadership", "communication", "problem-solving", "time management",
+    "adaptability", "critical thinking", "creativity", "collaboration", "project management",
+    "public speaking", "writing", "research", "customer service", "sales", "marketing",
+    "negotiation", "strategic planning", "financial analysis", "budgeting", "risk management",
+    "quality assurance", "networking", "cloud computing", "iot", "computer vision", "nlp",
+    "natural language processing", "reinforcement learning", "neural networks", "cnn", "rnn",
+    "gans", "transformers", "bert", "gpt", "llm", "large language models", "prompt engineering"
+  ]
+}

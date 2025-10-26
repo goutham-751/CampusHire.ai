@@ -7,7 +7,15 @@ import os
 # Load environment variables from .env file if it exists
 env_path = Path(__file__).parent.parent / '.env'
 if env_path.exists():
-    load_dotenv(dotenv_path=env_path)
+    try:
+        load_dotenv(dotenv_path=env_path, encoding='utf-8')
+    except UnicodeDecodeError:
+        # If UTF-8 fails, try with a different encoding
+        with open(env_path, 'r', encoding='utf-16') as f:
+            content = f.read()
+        with open(env_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        load_dotenv(dotenv_path=env_path, encoding='utf-8')
 
 class Settings(BaseSettings):
     # Application
@@ -22,7 +30,7 @@ class Settings(BaseSettings):
     
     # File Uploads
     UPLOAD_FOLDER: str = str(Path(__file__).parent.parent / "uploads")
-    MAX_CONTENT_LENGTH: int = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))  # 16MB default
+    MAX_CONTENT_LENGTH: int = int(os.getenv("MAX_CONTENT_LENGTH", 16 * 1024 * 1024))
     ALLOWED_EXTENSIONS: set[str] = {"pdf", "doc", "docx"}
     
     # Logging
